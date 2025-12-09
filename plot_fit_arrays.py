@@ -16,7 +16,7 @@ Flächen bezieht sich die Richtung auf den Normalenvektor.
 import numpy as np
 from matplotlib import pyplot as plt
 
-from mesh import Mesh  # ToDo Importiert hier eure eigene Mesh Implementierung
+from fit import Mesh  # ToDo Importiert hier eure eigene Mesh Implementierung
 
 
 def plot_matrix(matrix):
@@ -121,8 +121,8 @@ zs = np.array([1, 5, 6])
 mesh = Mesh(xs, ys, zs)
 
 # Kommentiere nach Bedarf ein oder aus
-plot_1Np_vector(mesh, mesh.primal_dv)
+#plot_1Np_vector(mesh, mesh.primal_dv)
 plot_1Np_vector(mesh, mesh.primal_idxv)
 plot_3Np_vector(mesh, mesh.primal_idxs)
-plot_3Np_vector(mesh, mesh.primal_ds)
+#plot_3Np_vector(mesh, mesh.primal_ds)
 plot_matrix(mesh.primal_grad)
