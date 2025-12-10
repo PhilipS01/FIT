@@ -5,9 +5,9 @@ from pyevtk.hl import gridToVTK
 
 """Plattenkondensator mit quadratischen Platten bei z=0 und z=d."""
 
-l = 30.0 # Kantenlänge in cm
-d = 30.0 # Plattenabstand in cm
-res = 10 # Gitterauflösung (gleich in alle Richtungen)
+l = 30.0E-2 # Kantenlänge in m
+d = 30.0E-2 # Plattenabstand in m
+res = 30 # Gitterauflösung (gleich in alle Richtungen)
 
 # Basisvektoren
 plate_mesh_linspace = np.linspace(0, l, res)
@@ -26,17 +26,13 @@ for i in range(model.Nx):
     for j in range(model.Ny):
         idx1 = model.canonical_index(i, j + 1, 1) # z=0
         idx2 = model.canonical_index(i, j + 1, model.Nz) # z=d
-        phi[idx1] = 0.0 # untere Platte
-        phi[idx2] = 100.0 # obere Platte
+        phi[idx1] = 100.0 # untere Platte
+        phi[idx2] = 0.0 # obere Platte
         solve_mask[idx1] = False
         solve_mask[idx2] = False
 
-# Potential in bekannten und unbekannten Teil aufteilen
-x_1 = phi[phi == np.empty]
-x_2 = phi[phi != np.empty]
-
 # Unbekannter Teil des Systems (unbekannte Potentiale)
-A_22 = A[solve_mask, :][:, solve_mask] # A[rows, :][:, cols]
+A_11 = A[solve_mask, :][:, solve_mask] # A[rows, :][:, cols]
 
 # Kopplungsmatrix (bekannter Teil auf unbekannten Teil)
 A_12 = A[solve_mask, :][:, ~solve_mask] # A[rows, :][:, cols]
@@ -48,8 +44,8 @@ x_2 = phi[~solve_mask]
 b = -A_12 @ x_2
 
 # Lösen des Gleichungssystems
-print(f"Löse System mit {A_22.shape[0]} Unbekannten...")
-x_1 = sparse.linalg.spsolve(A_22, b)
+print(f"Löse System mit {A_11.shape[0]} Unbekannten...")
+x_1 = sparse.linalg.spsolve(A_11, b)
 
 # Gesamtes Potential zusammensetzen
 phi_sol = np.zeros(model.Np)
@@ -79,6 +75,24 @@ E_z[~model.primal_idxv] = 0.0
 ebow_x[~model.primal_idxv] = 0.0
 ebow_y[~model.primal_idxv] = 0.0
 ebow_z[~model.primal_idxv] = 0.0
+
+# Gitterfluss berechnen
+eps = np.ones(model.Np) * 8.854187813E-12 # Vakuumpermittivität
+mat = eps * l/res * l/res * res/d # eps_n_mean * A_n / L_n
+flux = mat * ebow_z
+print(f"Gesamtgitterfluss (in z-Richtung): {np.sum(flux)} C")
+
+# Kapazität berechnen
+top_flux_indices = []
+for i in range(model.Nx):
+    for j in range(model.Ny):
+        idx = model.canonical_index(i, j + 1, model.Nz-1) # obere Platte
+        top_flux_indices.append(idx)
+
+Q = np.sum(flux[top_flux_indices]) # Gesamtladung entspricht Fluss durch die obere Platte
+U = 100.0 # Spannung zwischen den Platten
+C = abs(Q / U)
+print(f"Kapazität des Plattenkondensators: {C} F")
 
 # Ergebnisse als VTK speichern
 gridToVTK("./plattenkondensator", model.xmesh, model.ymesh, model.zmesh, 
