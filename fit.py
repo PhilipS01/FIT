@@ -154,26 +154,20 @@ class Mesh:
 
         # x-Kanten (Block 1: Index 0 bis Np-1)
         # Geister-Kante ist die letzte Kante in x-Richtung (bei i = Nx-1)
-        for j in range(self.Ny):
-            for k in range(self.Nz):
-                # i = Nx-1 (letzter Index 0-basiert)
-                # j+1, k+1 (da canonical_index 1-basiert erwartet)
-                idx = self.canonical_index(self.Nx - 1, j + 1, k + 1)
-                idxs[idx] = False
-
-        # y-Kanten (Block 2: Index Np bis 2Np-1)
-        # Geister-Kante ist die letzte Kante in y-Richtung (bei j = Ny)
-        for i in range(self.Nx):
-            for k in range(self.Nz):
-                idx = self.canonical_index(i, self.Ny, k + 1)
-                idxs[idx + self.Np] = False  # mit Offset Np
-
-        # z-Kanten (Block 3: Index 2Np bis 3Np-1)
-        # Geister-Kante ist die letzte Kante in z-Richtung (bei k = Nz)
-        for i in range(self.Nx):
-            for j in range(self.Ny):
-                idx = self.canonical_index(i, j + 1, self.Nz)
-                idxs[idx + 2 * self.Np] = False # mit Offset 2Np
+        # for j in range(self.Ny):
+        #     for k in range(self.Nz):
+        #         # i = Nx-1 (letzter Index 0-basiert)
+        #         # j+1, k+1 (da canonical_index 1-basiert erwartet)
+        #         idx = self.canonical_index(self.Nx - 1, j + 1, k + 1)
+        #         idxs[idx] = False
+        
+        # using numpy broadcasting for speedup (alternative to above loop)
+        # x-edges
+        idxs[:self.Np].reshape((self.Nz, self.Ny, self.Nx))[:, :, -1] = False
+        # y-edges
+        idxs[self.Np:2*self.Np].reshape((self.Nz, self.Ny, self.Nx))[:, -1, :] = False
+        # z-edges
+        idxs[2*self.Np:3*self.Np].reshape((self.Nz, self.Ny, self.Nx))[-1, :, :] = False
 
         return idxs
 
@@ -188,45 +182,17 @@ class Mesh:
         """
         primal_idxa = np.ones((3 * self.Np,), dtype=bool)
 
-        ## Flächen mit Normalvektor in x-Richtung --> am Ende von y ODER z
-        # am y-Rand (für alle x und z)
-        for i in range(self.Nx):
-            for k in range(self.Nz):
-                idx = self.canonical_index(i, self.Ny, k + 1)
-                primal_idxa[idx] = False
+        # x-Flächen (Block 1: Index 0 bis Np-1)
+        # Geister-Fläche ist die letzte Fläche in x-Richtung (bei i = Nx-1), d.h. am Ende von y oder z
+        primal_idxa[:self.Np].reshape((self.Nz, self.Ny, self.Nx))[:, -1, :] = False # am Ende von y
+        primal_idxa[:self.Np].reshape((self.Nz, self.Ny, self.Nx))[-1, :, :] = False # am Ende von z
+        # y-Flächen (Block 2: Index Np bis 2*Np-1), d.h. am Ende von x oder z
+        primal_idxa[self.Np:2*self.Np].reshape((self.Nz, self.Ny, self.Nx))[:, :, -1] = False # am Ende von x
+        primal_idxa[self.Np:2*self.Np].reshape((self.Nz, self.Ny, self.Nx))[-1, :, :] = False # am Ende von z
+        # z-Flächen (Block 3: Index 2*Np bis 3*Np-1), d.h. am Ende von x oder y
+        primal_idxa[2*self.Np:3*self.Np].reshape((self.Nz, self.Ny, self.Nx))[:, :, -1] = False # am Ende von x
+        primal_idxa[2*self.Np:3*self.Np].reshape((self.Nz, self.Ny, self.Nx))[:, -1, :] = False # am Ende von y
 
-        # am z-Rand (für alle x und y)
-        for i in range(self.Nx):
-            for j in range(self.Ny):
-                idx = self.canonical_index(i, j + 1, self.Nz)
-                primal_idxa[idx] = False
-        
-        ## Flächen mit Normalvektor in y-Richtung --> am Ende von x ODER z
-        # am x-Rand (für alle y und z)
-        for j in range(self.Ny):
-            for k in range(self.Nz):
-                idx = self.canonical_index(self.Nx - 1, j + 1, k + 1)
-                primal_idxa[idx + self.Np] = False # mit Offset Np
-        
-        # am z-Rand (für alle y und x)
-        for i in range(self.Nx):
-            for j in range(self.Ny):
-                idx = self.canonical_index(i, j + 1, self.Nz)
-                primal_idxa[idx + self.Np] = False # mit Offset Np
-        
-        ## Flächen mit Normalvektor in z-Richtung --> am Ende von x ODER y
-        # am x-Rand (für alle z und y)
-        for j in range(self.Ny):
-            for k in range(self.Nz):
-                idx = self.canonical_index(self.Nx - 1, j + 1, k + 1)
-                primal_idxa[idx + 2 * self.Np] = False # mit Offset 2Np
-        
-        # am y-Rand (für alle z und x)
-        for i in range(self.Nx):
-            for k in range(self.Nz):
-                idx = self.canonical_index(i, self.Ny, k + 1)
-                primal_idxa[idx + 2 * self.Np] = False # mit Offset 2Np
-        
         return primal_idxa
 
     @cached_property
@@ -240,24 +206,9 @@ class Mesh:
         """
         primal_idxv = np.ones(self.Np, dtype=bool)
         # --> am Ende von x oder y oder z
-
-        # am Ende von x
-        for j in range(self.Ny):
-            for k in range(self.Nz):
-                idx = self.canonical_index(self.Nx - 1, j + 1, k + 1)
-                primal_idxv[idx] = False
-
-        # am Ende von y
-        for i in range(self.Nx):
-            for k in range(self.Nz):
-                idx = self.canonical_index(i, self.Ny, k + 1)
-                primal_idxv[idx] = False 
-
-        # am Ende von z
-        for i in range(self.Nx):
-            for j in range(self.Ny):
-                idx = self.canonical_index(i, j + 1, self.Nz)
-                primal_idxv[idx] = False
+        primal_idxv.reshape((self.Nz, self.Ny, self.Nx))[:, :, -1] = False
+        primal_idxv.reshape((self.Nz, self.Ny, self.Nx))[:, -1 :] = False
+        primal_idxv.reshape((self.Nz, self.Ny, self.Nx))[-1 :, :] = False
 
         return primal_idxv
 
@@ -367,27 +318,22 @@ class Mesh:
         np.ndarray (float)
             Every edges length (sorted according to global canonical indexing)
         """
-        # x-edges
-        ds_x = np.zeros(self.Np, dtype=float64)
-        for j in range(self.Ny):
-            for k in range(self.Nz):
-                for i in range(self.Nx - 1):
-                    idx = self.canonical_index(i, j + 1, k + 1)
-                    ds_x[idx] = self.xmesh[i + 1] - self.xmesh[i]
-        # y-edges
-        ds_y = np.zeros(self.Np, dtype=float64)
-        for i in range(self.Nx):
-            for k in range(self.Nz):
-                for j in range(self.Ny - 1):
-                    idx = self.canonical_index(i, j + 1, k + 1)
-                    ds_y[idx] = self.ymesh[j + 1] - self.ymesh[j]
-        # z-edges
-        ds_z = np.zeros(self.Np, dtype=float64)
-        for i in range(self.Nx):
-            for j in range(self.Ny):
-                for k in range(self.Nz - 1):
-                    idx = self.canonical_index(i, j + 1, k + 1)
-                    ds_z[idx] = self.zmesh[k + 1] - self.zmesh[k]
+
+        def _get_primal_lengths(coords):
+            n = len(coords)
+            d_primal = np.zeros(n)
+
+            d_primal[0:-1] = coords[1:] - coords[:-1] # automatically "excludes" last ghost edge
+            return d_primal
+        
+        dx_primal = _get_primal_lengths(self.xmesh)
+        dy_primal = _get_primal_lengths(self.ymesh)
+        dz_primal = _get_primal_lengths(self.zmesh)
+        # Construct full primal_ds array according to canonical indexing
+        ds_x = np.tile(dx_primal, self.Ny * self.Nz)
+        ds_y = np.repeat(dy_primal, self.Nx)       # [dy0, dy0... (Nx times), dy1, dy1...]
+        ds_y = np.tile(ds_y, self.Nz)            # repeat for all z-layers
+        ds_z = np.repeat(dz_primal, self.Nx * self.Ny)
         
         return np.concatenate((ds_x, ds_y, ds_z))
 
@@ -400,27 +346,13 @@ class Mesh:
         np.ndarray (float)
             Every faces area (sorted according to global canonical indexing)
         """
-        # x-direction
-        da_x = np.zeros(self.Np, dtype=float64)
-        for j in range(self.Ny - 1):
-            for k in range(self.Nz - 1):
-                for i in range(self.Nx):
-                    idx = self.canonical_index(i, j + 1, k + 1)
-                    da_x[idx] = (self.ymesh[j + 1] - self.ymesh[j]) * (self.zmesh[k+1] - self.zmesh[k])
-        # y-direction 
-        da_y = np.zeros(self.Np, dtype=float64)
-        for i in range(self.Nx - 1):
-            for k in range(self.Nz - 1):
-                for j in range(self.Ny):
-                    idx = self.canonical_index(i, j + 1, k + 1)
-                    da_y[idx] = (self.xmesh[i + 1] - self.xmesh[i]) * (self.zmesh[k+1] - self.zmesh[k])
-        # z-direction
-        da_z = np.zeros(self.Np, dtype=float64)
-        for i in range(self.Nx - 1):
-            for j in range(self.Ny - 1):
-                for k in range(self.Nz):
-                    idx = self.canonical_index(i, j + 1, k + 1)
-                    da_z[idx] = (self.xmesh[i + 1] - self.xmesh[i]) * (self.ymesh[j+1] - self.ymesh[j])
+        
+        # y-z plane --> dual edge in x-direction
+        da_x = self.primal_ds[self.Np:2*self.Np] * self.primal_ds[2*self.Np:3*self.Np]
+        # x-z plane --> dual edge in y-direction
+        da_y = self.primal_ds[0:self.Np] * self.primal_ds[2*self.Np:3*self.Np]
+        # x-y plane --> dual edge in z-direction
+        da_z = self.primal_ds[0:self.Np] * self.primal_ds[self.Np:2*self.Np]
 
         return np.concatenate((da_x, da_y, da_z))
 
@@ -434,13 +366,7 @@ class Mesh:
             Every cells area
         """
 
-        dv = np.zeros(self.Np, dtype=float64)
-        for i in range(self.Nx - 1):
-            for j in range(self.Ny - 1):
-                for k in range(self.Nz - 1):
-                    idx = self.canonical_index(i, j + 1, k + 1)
-                    dv[idx] = (self.xmesh[i + 1] - self.xmesh[i]) * (self.ymesh[j + 1] - self.ymesh[j]) * (self.zmesh[k + 1] - self.zmesh[k])
-
+        dv = self.primal_ds[:self.Np] * self.primal_ds[self.Np:2*self.Np] * self.primal_ds[2*self.Np:3*self.Np]
         return dv
 
     @cached_property
@@ -454,24 +380,24 @@ class Mesh:
         """
         # same as primal_ds but shifted by one in each direction
 
-        def get_dual_lengths(coords):
+        def _get_dual_lengths(coords):
             n = len(coords)
             d_dual = np.zeros(n)
             
-            # Innere Punkte: (x[i+1] - x[i-1]) / 2
+            # inner points: (x[i+1] - x[i-1]) / 2
             d_dual[1:-1] = (coords[2:] - coords[:-2]) / 2.0
             
-            # Ränder (Linker Rand bis erstes Zellzentrum)
+            # edges (left edge to first cell center)
             d_dual[0] = (coords[1] - coords[0]) / 2.0
-            # Ränder (Letztes Zellzentrum bis rechter Rand)
+            # edges (last cell center to right edge)
             d_dual[-1] = (coords[-1] - coords[-2]) / 2.0
             
             return d_dual
 
         # 1D arrays of dual lengths in each direction
-        dx_dual = get_dual_lengths(self.xmesh)
-        dy_dual = get_dual_lengths(self.ymesh)
-        dz_dual = get_dual_lengths(self.zmesh)
+        dx_dual = _get_dual_lengths(self.xmesh)
+        dy_dual = _get_dual_lengths(self.ymesh)
+        dz_dual = _get_dual_lengths(self.zmesh)
         # Construct full dual_ds array according to canonical indexing
         ds_x = np.tile(dx_dual, self.Ny * self.Nz)
         ds_y = np.repeat(dy_dual, self.Nx)       # [dy0, dy0... (Nx times), dy1, dy1...]
@@ -511,8 +437,9 @@ class Mesh:
         ndarray (float)
             Every cells volume (sorted according to global canonical indexing)
         """
-        raise("Implement in 8.2")
-        return None
+
+        dv = self.dual_ds[:self.Np] * self.dual_ds[self.Np:2*self.Np] * self.dual_ds[2*self.Np:3*self.Np]
+        return dv
 
 
     def m_eps(self, eps_r) -> sparse.csr_array:
@@ -592,7 +519,7 @@ class Mesh:
         pe : ndarray
             value on the edges (sorted according to global canonical indexing)
         idxv : ndarray
-            indices of cells that are inside the domain
+            boolean indices of cells that are inside the domain
 
         Returns
         -------
