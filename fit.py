@@ -358,3 +358,276 @@ class Mesh:
         inverted_diagonal = np.divide(1, diagonal, where=diagonal != 0, out=np.zeros_like(diagonal))
         return sparse.diags_array(inverted_diagonal, format="csr").tocsr()
     
+    @cached_property
+    def primal_ds(self) -> ndarray[tuple[int], dtype[float64]]:
+        """Return vector containing length of every primal edge.
+
+        Returns
+        -------
+        np.ndarray (float)
+            Every edges length (sorted according to global canonical indexing)
+        """
+        # x-edges
+        ds_x = np.zeros(self.Np, dtype=float64)
+        for j in range(self.Ny):
+            for k in range(self.Nz):
+                for i in range(self.Nx - 1):
+                    idx = self.canonical_index(i, j + 1, k + 1)
+                    ds_x[idx] = self.xmesh[i + 1] - self.xmesh[i]
+        # y-edges
+        ds_y = np.zeros(self.Np, dtype=float64)
+        for i in range(self.Nx):
+            for k in range(self.Nz):
+                for j in range(self.Ny - 1):
+                    idx = self.canonical_index(i, j + 1, k + 1)
+                    ds_y[idx] = self.ymesh[j + 1] - self.ymesh[j]
+        # z-edges
+        ds_z = np.zeros(self.Np, dtype=float64)
+        for i in range(self.Nx):
+            for j in range(self.Ny):
+                for k in range(self.Nz - 1):
+                    idx = self.canonical_index(i, j + 1, k + 1)
+                    ds_z[idx] = self.zmesh[k + 1] - self.zmesh[k]
+        
+        return np.concatenate((ds_x, ds_y, ds_z))
+
+    @cached_property
+    def primal_da(self) -> ndarray[tuple[int], dtype[float64]]:
+        """Return vector containing area of every primary face.
+
+        Returns
+        -------
+        np.ndarray (float)
+            Every faces area (sorted according to global canonical indexing)
+        """
+        # x-direction
+        da_x = np.zeros(self.Np, dtype=float64)
+        for j in range(self.Ny - 1):
+            for k in range(self.Nz - 1):
+                for i in range(self.Nx):
+                    idx = self.canonical_index(i, j + 1, k + 1)
+                    da_x[idx] = (self.ymesh[j + 1] - self.ymesh[j]) * (self.zmesh[k+1] - self.zmesh[k])
+        # y-direction 
+        da_y = np.zeros(self.Np, dtype=float64)
+        for i in range(self.Nx - 1):
+            for k in range(self.Nz - 1):
+                for j in range(self.Ny):
+                    idx = self.canonical_index(i, j + 1, k + 1)
+                    da_y[idx] = (self.xmesh[i + 1] - self.xmesh[i]) * (self.zmesh[k+1] - self.zmesh[k])
+        # z-direction
+        da_z = np.zeros(self.Np, dtype=float64)
+        for i in range(self.Nx - 1):
+            for j in range(self.Ny - 1):
+                for k in range(self.Nz):
+                    idx = self.canonical_index(i, j + 1, k + 1)
+                    da_z[idx] = (self.xmesh[i + 1] - self.xmesh[i]) * (self.ymesh[j+1] - self.ymesh[j])
+
+        return np.concatenate((da_x, da_y, da_z))
+
+    @cached_property
+    def primal_dv(self) -> ndarray[tuple[int], dtype[float64]]:
+        """Return vector containing volume of every primary cell.
+
+        Returns
+        -------
+        np.ndarray (float)
+            Every cells area
+        """
+
+        dv = np.zeros(self.Np, dtype=float64)
+        for i in range(self.Nx - 1):
+            for j in range(self.Ny - 1):
+                for k in range(self.Nz - 1):
+                    idx = self.canonical_index(i, j + 1, k + 1)
+                    dv[idx] = (self.xmesh[i + 1] - self.xmesh[i]) * (self.ymesh[j + 1] - self.ymesh[j]) * (self.zmesh[k + 1] - self.zmesh[k])
+
+        return dv
+
+    @cached_property
+    def dual_ds(self) -> ndarray[tuple[int], dtype[float64]]:
+        """Return vector containing length of every dual edge.
+
+        Returns
+        -------
+        ndarray (float)
+            Every edges length (sorted according to global canonical indexing)
+        """
+        # same as primal_ds but shifted by one in each direction
+
+        def get_dual_lengths(coords):
+            n = len(coords)
+            d_dual = np.zeros(n)
+            
+            # Innere Punkte: (x[i+1] - x[i-1]) / 2
+            d_dual[1:-1] = (coords[2:] - coords[:-2]) / 2.0
+            
+            # Ränder (Linker Rand bis erstes Zellzentrum)
+            d_dual[0] = (coords[1] - coords[0]) / 2.0
+            # Ränder (Letztes Zellzentrum bis rechter Rand)
+            d_dual[-1] = (coords[-1] - coords[-2]) / 2.0
+            
+            return d_dual
+
+        # 1D arrays of dual lengths in each direction
+        dx_dual = get_dual_lengths(self.xmesh)
+        dy_dual = get_dual_lengths(self.ymesh)
+        dz_dual = get_dual_lengths(self.zmesh)
+        # Construct full dual_ds array according to canonical indexing
+        ds_x = np.tile(dx_dual, self.Ny * self.Nz)
+        ds_y = np.repeat(dy_dual, self.Nx)       # [dy0, dy0... (Nx times), dy1, dy1...]
+        ds_y = np.tile(ds_y, self.Nz)            # repeat for all z-layers
+        ds_z = np.repeat(dz_dual, self.Nx * self.Ny)
+
+        return np.concatenate((ds_x, ds_y, ds_z))
+        
+
+    @cached_property
+    def dual_da(self) -> ndarray[tuple[int], dtype[float64]]:
+        """Return vector containing area of every dual face.
+
+        Returns
+        -------
+        ndarray (float)
+            Every faces area (sorted according to global canonical indexing)
+        """
+
+        # use dual_ds to calculate dual areas
+        # y-z plane --> dual edge in x-direction
+        da_x = self.dual_ds[self.Np:2*self.Np] * self.dual_ds[2*self.Np:3*self.Np]
+        # x-z plane --> dual edge in y-direction
+        da_y = self.dual_ds[0:self.Np] * self.dual_ds[2*self.Np:3*self.Np]
+        # x-y plane --> dual edge in z-direction
+        da_z = self.dual_ds[0:self.Np] * self.dual_ds[self.Np:2*self.Np]
+
+        return np.concatenate((da_x, da_y, da_z))
+
+
+    @cached_property
+    def dual_dv(self) -> ndarray[tuple[int], dtype[float64]]:
+        """Return vector containing volume of every dual cell.
+
+        Returns
+        -------
+        ndarray (float)
+            Every cells volume (sorted according to global canonical indexing)
+        """
+        raise("Implement in 8.2")
+        return None
+
+
+    def m_eps(self, eps_r) -> sparse.csr_array:
+        """Create permittivity matrix.
+
+        Parameters
+        ----------
+        eps_r : ndarray
+            Array containing the relative permittivity for each cell. If only one permittivity is given, the domain is homogeneous.
+            For anisotropic case 3 values are given in global canonical indexing.
+
+        Returns
+        -------
+        sparse.csr_array
+            Permittivity matrix
+        """
+        eps_0 = 8.854187817e-12
+        eps_bar = np.zeros(3 * self.Np)
+        Np = self.Np
+        da = self.primal_da
+        dat = self.dual_da
+        Mx = self.Mx
+        My = self.My
+        Mz = self.Mz
+        if len(eps_r) == 1:
+            eps = np.full(3 * Np, eps_0 * eps_r)
+        elif len(eps_r) == Np:
+            eps = np.tile(eps_0 * eps_r, 3)
+        elif len(eps_r) == 3 * Np:
+            eps = eps_0 * eps_r
+        else:
+            print('Vector with permittivity has wrong dimensions!')
+            return
+        for n in range(0, Np):
+            temp = eps[n] * da[n]
+            if n - My - Mz >= 0:
+                temp = temp + eps[n - My - Mz] * da[n - My - Mz]
+            if n - Mz >= 0:
+                temp = temp + eps[n - Mz] * da[n - Mz]
+            if n - My >= 0:
+                temp = temp + eps[n - My] * da[n - My]
+            eps_bar[n] = temp / (4 * dat[n])
+
+            temp = eps[Np + n] * da[Np + n]
+            if n - Mx - Mz >= 0:
+                temp = temp + eps[n - Mx - Mz + Np] * da[n - Mx - Mz + Np]
+            if n - Mz >= 0:
+                temp = temp + eps[n - Mz + Np] * da[n - Mz + Np]
+            if n - Mx >= 0:
+                temp = temp + eps[n - Mx + Np] * da[n - Mx + Np]
+            eps_bar[n + Np] = temp / (4 * dat[n + Np])
+
+            temp = eps[2 * Np + n] * da[2 * Np + n]
+            if n - Mx - My >= 0:
+                temp = temp + eps[n - Mx - My + 2 * Np] * da[n - Mx - My + 2 * Np]
+            if n - Mx >= 0:
+                temp = temp + eps[n - Mx + 2 * Np] * da[n - Mx + 2 * Np]
+            if n - My >= 0:
+                temp = temp + eps[n - My + 2 * Np] * da[n - My + 2 * Np]
+            eps_bar[n + 2 * Np] = temp / (4 * dat[n + 2 * Np])
+
+        d_eps = sparse.diags_array(eps_bar, shape=(3 * Np, 3 * Np))
+        dda = sparse.diags_array(dat, shape=(3 * Np, 3 * Np))
+
+        inverted_ds = np.zeros(3 * self.Np)
+        inverted_ds[self.primal_idxs] = 1 / self.primal_ds[self.primal_idxs]
+        inverted_ds = sparse.diags_array(inverted_ds)
+
+        return dda.dot(d_eps.dot(inverted_ds)).tocsr()
+
+    def pe2pc(self, pe, idxv) -> ndarray[tuple[int], dtype[float64]]:
+        """ Return array with cell-averaged values for every direction.
+            Input values are allocated in primal edges.
+
+        Parameters
+        ----------
+        pe : ndarray
+            value on the edges (sorted according to global canonical indexing)
+        idxv : ndarray
+            indices of cells that are inside the domain
+
+        Returns
+        -------
+        pc : ndarray
+           Averaged value for each cell (sorted according to global canonical indexing)
+        """
+        pc = np.zeros((self.Np, 3))
+        pc[idxv, 0] = (pe[idxv] + pe[idxv + self.Nx] + pe[idxv + self.Nx * self.Ny] + pe[
+            idxv + self.Nx * self.Ny + self.Nx]) / 4
+        pc[idxv, 1] = (pe[idxv + self.Np] + pe[idxv + self.Np + 1] + pe[idxv + self.Nx * self.Ny + self.Np + 1] + pe[
+            idxv + self.Nx * self.Ny + self.Np + 1]) / 4
+        pc[idxv, 2] = (pe[idxv + 2 * self.Np] + pe[idxv + 2 * self.Np + 1] + pe[idxv + self.Nx + 2 * self.Np + 1] + pe[
+            idxv + self.Nx + 2 * self.Np + 1]) / 4
+        return pc
+
+
+    def pf2pc(self, pf, idxv) -> ndarray[tuple[int], dtype[float64]]:
+        """ Return array with cell-averaged values for every direction.
+            Input values are allocated on primal facets.
+
+        Parameters
+        ----------
+        pf : ndarray
+            value on the facets (sorted according to global canonical indexing)
+        idxv : ndarray
+            indices of cells that are inside the domain
+
+        Returns
+        -------
+        pc : ndarray
+            Averaged value for each cell (sorted according to global canonical indexing)
+        """
+        pc = np.zeros((self.Np, 3))
+        pc[idxv, 0] = (pf[idxv] + pf[idxv + self.Mx]) / 2
+        pc[idxv, 1] = (pf[idxv + self.Np] + pf[idxv + self.My + self.Np]) / 2
+        pc[idxv, 2] = (pf[idxv + 2 * self.Np] + pf[idxv + self.Mz + 2 * self.Np]) / 2
+        return pc
+
