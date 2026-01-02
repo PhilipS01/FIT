@@ -18,8 +18,9 @@ gap_mesh_linspace = np.linspace(0, d, res)
 # FIT Mesh
 model = Mesh(plate_mesh_linspace, plate_mesh_linspace, gap_mesh_linspace) # d.h. dphi/dy = 0
 
+# linear variierende, relative Permittivität entlang z-Richtung
+eps_r = np.repeat(np.linspace(1.0, 10.0, model.Nz), model.Nx * model.Ny)
 # Materialmatrix
-eps_r = np.ones(model.Np) # relative Permittivität
 m_eps = model.m_eps(eps_r) # shape (3*model.Np, 3*model.Np)
 
 # Topologische Matrizen
@@ -117,10 +118,10 @@ print(f"Gesamtladung Q: {Q_total:.2e} C")
 C = abs(Q_total / U)
 print(f"Kapazität C:    {C:.2e} F")
 
-eps0 = 8.854e-12
-C_ana = eps0 * (l**2) / d
-print(f"Analytisch:     {C_ana:.2e} F")
-print(f"Fehler:         {abs(C-C_ana)/C_ana * 100:.2f} %")
+# eps0 = 8.854e-12
+# C_ana = eps0 * (l**2) / d
+# print(f"Analytisch:     {C_ana:.2e} F")
+# print(f"Fehler:         {abs(C-C_ana)/C_ana * 100:.2f} %")
 
 # Ergebnisse als VTK speichern
 gridToVTK("./linearer_plattenkondensator_fixed", model.xmesh, model.ymesh, model.zmesh,
