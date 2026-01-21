@@ -125,6 +125,6 @@ print(f"Kapazität C:    {C:.2e} F")
 
 # Ergebnisse als VTK speichern
 gridToVTK("./linearer_plattenkondensator_fixed", model.xmesh, model.ymesh, model.zmesh,
-        pointData={"Phi (V)": phi}, cellData={"E (V/m)": (E_x, E_y, E_z)})
+        pointData={"Phi (V)": phi}, cellData={"E (V/m)": (E_x, E_y, E_z), "Epsilon": eps_r})
 
-print("\nFertig. Ergebnisse in 'linearer_plattenkondensator.vtr' gespeichert.")
+print("\nFertig. Ergebnisse in 'linearer_plattenkondensator_fixed.vtr' gespeichert.")

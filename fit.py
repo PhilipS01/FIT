@@ -442,7 +442,7 @@ class Mesh:
         return dv
 
 
-    def m_eps(self, eps_r) -> sparse.csr_array:
+    def m_eps(self, eps_r: ndarray) -> sparse.csr_array:
         """Create permittivity matrix.
 
         Parameters
@@ -558,3 +558,153 @@ class Mesh:
         pc[idxv, 2] = (pf[idxv + 2 * self.Np] + pf[idxv + self.Mz + 2 * self.Np]) / 2
         return pc
 
+    @cached_property
+    def primal_curl(self) -> sparse.csr_matrix | sparse.csr_array:
+        """
+        Returns
+        -------
+        sparse.csr_matrix | sparse.csr_array
+            Matrix representing discrete curl operator for primal grid.
+        """
+        Cx = sparse.hstack([sparse.csr_array((self.Np, self.Np)), -self.primal_pz, self.primal_py]).tocsr()
+        Cy = sparse.hstack([self.primal_pz, sparse.csr_array((self.Np, self.Np)), -self.primal_px]).tocsr()
+        Cz = sparse.hstack([-self.primal_py, self.primal_px, sparse.csr_array((self.Np, self.Np))]).tocsr()
+        C = sparse.bmat([[Cx], [Cy], [Cz]]).tocsr()
+        return C
+
+    @cached_property
+    def dual_curl(self) -> sparse.csr_array | sparse.csc_array | sparse.csr_matrix:
+        """
+        Returns
+        -------
+        sparse.csr_array
+            Matrix representing discrete curl operator for dual grid.
+        """
+        return self.primal_curl.transpose()
+        
+    @cached_property
+    def primal_div(self) -> sparse.csr_matrix | sparse.csr_array:
+        """
+        Returns
+        -------
+        sparse.csr_matrix | sparse.csr_array
+            Matrix representing discrete divergence operator for primal grid.
+        """
+        return sparse.bmat([[self.primal_px, self.primal_py, self.primal_pz]]).tocsr()
+
+    def m_nu(self, nu) -> sparse.dia_matrix | sparse.csr_matrix:
+        """Return reluctivity matrix.
+
+        Parameters
+        ----------
+        nu : ndarray
+            Array containing reluctivity for each cell of the grid.
+
+        Returns
+        -------
+        sparse.dia_matrix | sparse.csr_matrix
+            Reluctivity matrix
+        """
+        Np = self.Np
+        Nx = self.Nx
+        Ny = self.Ny
+
+        if len(nu) != Np:
+            raise ValueError("reluctivity vector has wrong dimensions")
+
+        primal_Lx, primal_Ly, primal_Lz = (
+            self.primal_ds[0:Np],
+            self.primal_ds[Np : 2 * Np],
+            self.primal_ds[2 * Np : 3 * Np],
+        )
+        dual_Lx, dual_Ly, dual_Lz = (
+            self.dual_ds[0:Np],
+            self.dual_ds[Np : 2 * Np],
+            self.dual_ds[2 * Np : 3 * Np],
+        )
+
+        i, j, k = self.canonical_inv(np.arange(Np))
+
+
+        # AVERAGING
+        # x: neighbor n-1 exists if i>0
+        nu_xm = np.roll(nu, 1)
+        Lx_xm = np.roll(primal_Lx, 1)
+        mask_xm = i > 0
+        nu_xm[~mask_xm] = 0.0
+        Lx_xm[~mask_xm] = 0.0
+        nu_bar_x = (primal_Lx * nu + Lx_xm * nu_xm) / (2.0 * dual_Lx)
+        # y: neighbor n-Nx exists if j>0
+        sh_y = Nx
+        nu_ym = np.roll(nu, sh_y)
+        Ly_ym = np.roll(primal_Ly, sh_y)
+        mask_ym = j > 0
+        nu_ym[~mask_ym] = 0.0
+        Ly_ym[~mask_ym] = 0.0
+        nu_bar_y = (primal_Ly * nu + Ly_ym * nu_ym) / (2.0 * dual_Ly)
+
+        # z: neighbor n-Nx*Ny exists if k>0
+        sh_z = Nx * Ny
+        nu_zm = np.roll(nu, sh_z)
+        Lz_zm = np.roll(primal_Lz, sh_z)
+        mask_zm = k > 0
+        nu_zm[~mask_zm] = 0.0
+        Lz_zm[~mask_zm] = 0.0
+        nu_bar_z = (primal_Lz * nu + Lz_zm * nu_zm) / (2.0 * dual_Lz)
+
+
+        # SCALING
+        diag = np.zeros(3 * Np, dtype=float)
+
+        # x-block
+        mx = self.primal_idxa[0:Np] & (self.primal_da[0:Np] != 0)
+        diag[0:Np][mx] = nu_bar_x[mx] * dual_Lx[mx] / self.primal_da[0:Np][mx]
+
+        # y-block
+        my = self.primal_idxa[Np : 2 * Np] & (self.primal_da[Np : 2 * Np] != 0)
+        diag[Np : 2 * Np][my] = (
+            nu_bar_y[my] * dual_Ly[my] / self.primal_da[Np : 2 * Np][my]
+        )
+        # z-block
+        mz = self.primal_idxa[2 * Np : 3 * Np] & (self.primal_da[2 * Np : 3 * Np] != 0)
+        diag[2 * Np : 3 * Np][mz] = (
+            nu_bar_z[mz] * dual_Lz[mz] / self.primal_da[2 * Np : 3 * Np][mz]
+        )
+
+        return sparse.diags(diag, 0, shape=(3 * Np, 3 * Np), format="csr")
+
+    @cached_property
+    def primal_boundary_edges(self) -> ndarray[tuple[int], dtype[np.bool]]:
+        """ Return boolean array containing the value true if corresponding edge a primal edge on the boundary, false otherwise.
+
+        Returns
+        -------
+        np.ndarray (bool)
+            True if boundary edge, false otherwise (sorted according to global canonical indexing)
+        """
+
+        boundary_idxs = np.zeros((3 * self.Np,), dtype=bool)
+
+        # set boundary edges to true
+        x_edges = boundary_idxs[:self.Np].reshape((self.Nz, self.Ny, self.Nx))
+        x_edges[:, 0, :] = True   # y = y_min
+        x_edges[:, -1, :] = True  # y = y_max
+        x_edges[0, :, :] = True   # z = z_min
+        x_edges[-1, :, :] = True  # z = z_max
+
+        y_edges = boundary_idxs[self.Np:2*self.Np].reshape((self.Nz, self.Ny, self.Nx))
+        y_edges[:, :, 0] = True   # x = x_min
+        y_edges[:, :, -1] = True  # x = x_max
+        y_edges[0, :, :] = True   # z = z_min
+        y_edges[-1, :, :] = True  # z = z_max
+
+        z_edges = boundary_idxs[2*self.Np:3*self.Np].reshape((self.Nz, self.Ny, self.Nx))
+        z_edges[:, :, 0] = True   # x = x_min
+        z_edges[:, :, -1] = True  # x = x_max
+        z_edges[:, 0, :] = True   # y = y_min
+        z_edges[:, -1, :] = True  # y = y_max
+
+        # exclude ghost edges
+        boundary_idxs &= self.primal_idxs
+        
+        return boundary_idxs
