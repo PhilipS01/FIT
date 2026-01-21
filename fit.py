@@ -592,7 +592,7 @@ class Mesh:
         """
         return sparse.bmat([[self.primal_px, self.primal_py, self.primal_pz]]).tocsr()
 
-    def m_nu(self, nu) -> sparse.dia_matrix | sparse.csr_matrix:
+    def m_nu(self, nu: ndarray) -> sparse.dia_matrix | sparse.csr_matrix:
         """Return reluctivity matrix.
 
         Parameters
